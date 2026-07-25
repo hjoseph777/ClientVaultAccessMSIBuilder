@@ -1,0 +1,20 @@
+{
+  "packageShare": ".",
+  "server": {
+    "endpoint": "2266",
+    "protocolSequence": "ncacn_ip_tcp",
+    "authType": "auto",
+    "autoLogin": "0",
+    "minimumAuthenticationLevel": "1"
+  },
+  "vaultPatterns": {
+    "conformity": "conform",
+    "approbation": "approb"
+  },
+  "defaultProfiles": ["conformity", "approbation", "both"],
+  "profiles": {
+    "conformity": { "vaultKeys": ["conformity"], "autoUpdate": true },
+    "approbation": { "vaultKeys": ["approbation"], "autoUpdate": true },
+    "both": { "vaultKeys": ["conformity", "approbation"], "autoUpdate": true }
+  }
+}

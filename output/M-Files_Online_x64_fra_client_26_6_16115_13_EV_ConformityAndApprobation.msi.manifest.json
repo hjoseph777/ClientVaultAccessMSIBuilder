@@ -1,0 +1,33 @@
+﻿{
+    "builtUtc":  "2026-07-25T15:46:41Z",
+    "profile":  "both",
+    "lang":  "fra",
+    "langResolvedBy":  "explicit",
+    "baseMsi":  "M-Files_Online_x64_fra_client_26_6_16115_13_EV.msi",
+    "baseMsiSha256":  "45C882A449E4F94477DA8CC37ACE833331467740EF111725A8AD13CAC1B8D182",
+    "baseMsiProductLanguage":  "1033",
+    "vbs":  "CustomizeInstaller2.3.vbs",
+    "autoUpdate":  true,
+    "vaults":  [
+                   {
+                       "key":  "conformity",
+                       "resolvedName":  "Conformity",
+                       "guid":  "{277BA46A-7F72-4ADD-B992-C90C270430E5}",
+                       "resolvedBy":  "auto-pattern"
+                   },
+                   {
+                       "key":  "approbation",
+                       "resolvedName":  "Approbation",
+                       "guid":  "{0CFA34B2-AC24-4061-80CF-B309ECE1840B}",
+                       "resolvedBy":  "auto-pattern"
+                   }
+               ],
+    "server":  {
+                   "networkAddress":  "DESKTOP-DKCS42P",
+                   "endpoint":  "2266",
+                   "addressResolvedBy":  "auto-detect"
+               },
+    "outputSha256":  "2DBAA81485A2CA7F93970D7E5F1F13004FD17B5F380EB14D7360ADE72F3BB08C",
+    "builtBy":  "Owner",
+    "builtOn":  "DESKTOP-DKCS42P"
+}

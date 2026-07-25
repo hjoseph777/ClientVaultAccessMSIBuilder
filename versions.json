@@ -1,0 +1,10 @@
+{
+  "pinned": "26_6_16115_13",
+  "vbs": "CustomizeInstaller2.3.vbs",
+  "packages": {
+    "26_6_16115_13": {
+      "fra": { "sha256": "45C882A449E4F94477DA8CC37ACE833331467740EF111725A8AD13CAC1B8D182" },
+      "eng": { "sha256": "AF0FD46FC2B254E83C0B88EE04D2684687027641CCCC1C0A7EF49643564B69EE" }
+    }
+  }
+}

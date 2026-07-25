@@ -1,0 +1,20 @@
+[2026-07-25 11:46:17] [PROGRESS] Checking environment readiness...
+[2026-07-25 11:46:17] [SUCCESS] Environment checks passed.
+[2026-07-25 11:46:17] [PROGRESS] Connecting to M-Files server (localhost) via COM...
+[2026-07-25 11:46:18] [SUCCESS] Connection successful using Windows SSO (AuthType=1).
+[2026-07-25 11:46:18] [SUCCESS] Enumerated 4 online vault(s).
+[2026-07-25 11:46:18] [PROGRESS] Resolving vaults by pattern...
+[2026-07-25 11:46:18] [SUCCESS] Resolved 'conformity' -> 'Conformity' ({277BA46A-7F72-4ADD-B992-C90C270430E5})
+[2026-07-25 11:46:18] [SUCCESS] Resolved 'approbation' -> 'Approbation' ({0CFA34B2-AC24-4061-80CF-B309ECE1840B})
+[2026-07-25 11:46:18] [PROGRESS] Verifying package integrity...
+[2026-07-25 11:46:27] [SUCCESS] Package verified: M-Files_Online_x64_fra_client_26_6_16115_13_EV.msi
+[2026-07-25 11:46:27] [SUCCESS] Pre-flight passed. NetworkAddress for generated clients: DESKTOP-DKCS42P
+[2026-07-25 11:46:27] [PROGRESS] Building 'Conformity' [fra] -> M-Files_Online_x64_fra_client_26_6_16115_13_EV_Conformity.msi
+[2026-07-25 11:46:32] [SUCCESS] Built M-Files_Online_x64_fra_client_26_6_16115_13_EV_Conformity.msi
+[2026-07-25 11:46:32] [PROGRESS] Building 'Approbation' [fra] -> M-Files_Online_x64_fra_client_26_6_16115_13_EV_Approbation.msi
+[2026-07-25 11:46:36] [SUCCESS] Built M-Files_Online_x64_fra_client_26_6_16115_13_EV_Approbation.msi
+[2026-07-25 11:46:36] [PROGRESS] Building 'Conformity and Approbation' [fra] -> M-Files_Online_x64_fra_client_26_6_16115_13_EV_ConformityAndApprobation.msi
+[2026-07-25 11:46:41] [SUCCESS] Built M-Files_Online_x64_fra_client_26_6_16115_13_EV_ConformityAndApprobation.msi
+[2026-07-25 11:46:41] [SUCCESS] Conformity [fra] -> C:\Users\Owner\Xerox\ClientVaultAccessMSIBuilder\output\M-Files_Online_x64_fra_client_26_6_16115_13_EV_Conformity.msi
+[2026-07-25 11:46:41] [SUCCESS] Approbation [fra] -> C:\Users\Owner\Xerox\ClientVaultAccessMSIBuilder\output\M-Files_Online_x64_fra_client_26_6_16115_13_EV_Approbation.msi
+[2026-07-25 11:46:41] [SUCCESS] Conformity and Approbation [fra] -> C:\Users\Owner\Xerox\ClientVaultAccessMSIBuilder\output\M-Files_Online_x64_fra_client_26_6_16115_13_EV_ConformityAndApprobation.msi
