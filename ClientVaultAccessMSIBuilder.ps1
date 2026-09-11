@@ -90,13 +90,40 @@ function Get-JsonValue {
     try { return $Object.$Name } catch { return $null }
 }
 
+function Get-JsonPropertyNames {
+    param(
+        $Object,
+        [string]$NodeNameForError = 'json node'
+    )
+
+    if ($null -eq $Object) { return @() }
+
+    try {
+        $names = New-Object System.Collections.Generic.List[string]
+        foreach ($p in $Object.PSObject.Properties) {
+            if ($null -ne $p -and -not [string]::IsNullOrWhiteSpace([string]$p.Name)) {
+                [void]$names.Add([string]$p.Name)
+            }
+        }
+        return @($names)
+    }
+    catch {
+        Invoke-Abort "Could not enumerate properties under '$NodeNameForError': $($_.Exception.Message)"
+    }
+}
+
 function Close-ComObjectSafe {
     param([object]$ComObject)
 
     if ($null -eq $ComObject) { return }
     if ([System.Runtime.InteropServices.Marshal]::IsComObject($ComObject)) {
-        [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ComObject)
+        [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($ComObject)
     }
+}
+
+function Invoke-ComGarbageCollection {
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
 }
 
 function Invoke-WithRetry {
@@ -242,7 +269,10 @@ function Get-OnlineVaults {
             }
             catch {
                 Write-Stage -Tag WARN -Message "Windows SSO connection failed after retries ($($_.Exception.Message)). Falling back to M-Files Authentication."
-                Close-ComObjectSafe -ComObject $serverApp
+                if ($null -ne $serverApp) {
+                    try { $serverApp.Disconnect() } catch { }
+                    Close-ComObjectSafe -ComObject $serverApp
+                }
                 $serverApp = New-Object -ComObject 'MFilesAPI.MFilesServerApplication'
 
                 $credential = Get-Credential -Message 'Windows SSO failed. Enter M-Files Authentication credentials.'
@@ -274,7 +304,8 @@ function Get-OnlineVaults {
 
         $vaults = New-Object System.Collections.Generic.List[object]
         $onlineVaultCom = $serverApp.GetOnlineVaults()
-        foreach ($v in $onlineVaultCom) {
+        for ($i = 1; $i -le $onlineVaultCom.Count; $i++) {
+            $v = $onlineVaultCom.Item($i)
             try {
                 $vaults.Add([pscustomobject]@{ Name = $v.Name; GUID = $v.GUID.ToString() })
             }
@@ -291,7 +322,11 @@ function Get-OnlineVaults {
     }
     finally {
         Close-ComObjectSafe -ComObject $onlineVaultCom
-        Close-ComObjectSafe -ComObject $serverApp
+        if ($null -ne $serverApp) {
+            try { $serverApp.Disconnect() } catch { }
+            Close-ComObjectSafe -ComObject $serverApp
+        }
+        Invoke-ComGarbageCollection
     }
 }
 
@@ -301,8 +336,17 @@ function Resolve-Vaults {
     Write-Stage -Tag PROGRESS -Message 'Resolving vaults by pattern...'
 
     $resolved = @{}
-    foreach ($key in $Config.vaultPatterns.PSObject.Properties.Name) {
-        $pattern = $Config.vaultPatterns.$key
+    $vaultPatterns = Get-JsonValue -Object $Config -Name 'vaultPatterns'
+    $vaultPatternKeys = Get-JsonPropertyNames -Object $vaultPatterns -NodeNameForError 'vaultPatterns'
+    if ($vaultPatternKeys.Count -eq 0) {
+        Invoke-Abort "profiles.json 'vaultPatterns' is empty. Define at least one vault pattern before running builds."
+    }
+
+    foreach ($key in $vaultPatternKeys) {
+        $pattern = [string](Get-JsonValue -Object $vaultPatterns -Name $key)
+        if ([string]::IsNullOrWhiteSpace($pattern)) {
+            Invoke-Abort "profiles.json 'vaultPatterns.$key' is missing or empty."
+        }
         $inScope = $RequiredKeys -contains $key
         $found = @($OnlineVaults | Where-Object { $_.Name -match [regex]::Escape($pattern) })
 
@@ -364,9 +408,13 @@ function Get-MsiProductLanguage {
     }
     finally {
         Close-ComObjectSafe -ComObject $record
-        Close-ComObjectSafe -ComObject $view
+        if ($null -ne $view) {
+            try { [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) } catch { }
+            Close-ComObjectSafe -ComObject $view
+        }
         Close-ComObjectSafe -ComObject $db
         Close-ComObjectSafe -ComObject $installer
+        Invoke-ComGarbageCollection
     }
 }
 
@@ -456,7 +504,28 @@ function Test-PackageIntegrity {
 function Get-NetworkAddress {
     param([string]$Override)
     if ($Override) { return $Override }
-    return [System.Net.Dns]::GetHostEntry('').HostName
+
+    try {
+        $hostEntry = [System.Net.Dns]::GetHostEntry('')
+        if ($null -ne $hostEntry -and -not [string]::IsNullOrWhiteSpace([string]$hostEntry.HostName)) {
+            return $hostEntry.HostName
+        }
+    }
+    catch {
+        Write-Stage -Tag WARN -Message "Auto-detect FQDN via DNS host entry failed: $($_.Exception.Message). Falling back to local host name."
+    }
+
+    try {
+        $hostName = [System.Net.Dns]::GetHostName()
+        if (-not [string]::IsNullOrWhiteSpace([string]$hostName)) {
+            return $hostName
+        }
+    }
+    catch {
+        Write-Stage -Tag WARN -Message "Fallback host name lookup failed: $($_.Exception.Message)."
+    }
+
+    Invoke-Abort 'Could not auto-detect a network-reachable server name. Use -ServerAddress to provide a hostname/FQDN explicitly.'
 }
 
 function Add-XmlChildText {
@@ -593,6 +662,9 @@ function Invoke-CustomizerBuild {
             return @{ Success = $false; Reason = 'cscript timed out after 300 seconds' }
         }
 
+        # Flush asynchronous stdout/stderr buffers
+        $proc.WaitForExit()
+
         if ($proc.ExitCode -ne 0) {
             return @{ Success = $false; Reason = "cscript exit code $($proc.ExitCode). $($stderrBuilder.ToString())" }
         }
@@ -643,6 +715,8 @@ function New-BuildManifest {
             networkAddress    = $NetworkAddress
             endpoint          = $Config.server.endpoint
             addressResolvedBy = if ($ServerAddressOverride) { '-ServerAddress' } else { 'auto-detect' }
+            clientAuthType    = $Config.server.clientAuthType
+            builderAuthType   = $Config.server.builderAuthType
         }
         outputSha256           = $OutputHash
         builtBy                = $env:USERNAME
@@ -734,12 +808,47 @@ $config = Get-KitConfig
 $profilesToBuild = if ($Profiles) { $Profiles } else { $config.defaultProfiles }
 $langSelection = Select-Language -ExplicitLang $Lang
 $languagesToBuild = if ($langSelection.Value -eq 'all') { @('fra', 'eng') } else { @($langSelection.Value) }
-$requiredVaultKeys = @($profilesToBuild | ForEach-Object { $config.profiles.$_.vaultKeys } | Select-Object -Unique)
+$profilesConfig = Get-JsonValue -Object $config -Name 'profiles'
+$requiredVaultKeyBuffer = New-Object System.Collections.Generic.List[string]
+foreach ($profileName in $profilesToBuild) {
+    $profileConfig = Get-JsonValue -Object $profilesConfig -Name $profileName
+    if ($null -eq $profileConfig) {
+        Invoke-Abort "profiles.json has no 'profiles.$profileName' definition."
+    }
+
+    $vaultKeys = @(Get-JsonValue -Object $profileConfig -Name 'vaultKeys')
+    if ($vaultKeys.Count -eq 0) {
+        Invoke-Abort "profiles.json 'profiles.$profileName.vaultKeys' is missing or empty."
+    }
+
+    foreach ($vaultKey in $vaultKeys) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$vaultKey)) {
+            [void]$requiredVaultKeyBuffer.Add([string]$vaultKey)
+        }
+    }
+}
+$requiredVaultKeys = @($requiredVaultKeyBuffer | Select-Object -Unique)
 
 $versionsPath = Test-PreflightEnvironment -Config $config
 $vaultConnectionResult = Get-OnlineVaults -Config $config
 $onlineVaults = $vaultConnectionResult.Vaults
-$config.server.authType = $vaultConnectionResult.DetectedAuthType
+
+# Decouple builder COM auth from client MSI auth:
+# Preserve configured clientAuthType if defined, or explicit authType if not 'auto'.
+# Only fall back to builder-detected authType if clientAuthType is omitted and authType was 'auto'.
+$builderAuthType = $vaultConnectionResult.DetectedAuthType
+$configuredClientAuthType = Get-JsonValue -Object $config.server -Name 'clientAuthType'
+if (-not [string]::IsNullOrWhiteSpace([string]$configuredClientAuthType)) {
+    $config.server.clientAuthType = [string]$configuredClientAuthType
+}
+elseif ($config.server.authType -ne 'auto') {
+    $config.server.clientAuthType = [string]$config.server.authType
+}
+else {
+    $config.server.clientAuthType = $builderAuthType
+}
+$config.server.builderAuthType = $builderAuthType
+$config.server.authType = $config.server.clientAuthType
 $resolvedVaults = Resolve-Vaults -OnlineVaults $onlineVaults -Config $config -RequiredKeys $requiredVaultKeys
 $packageInfo = Test-PackageIntegrity -Languages $languagesToBuild -Config $config -VersionsPath $versionsPath
 $networkAddress = Get-NetworkAddress -Override $ServerAddress
@@ -749,7 +858,10 @@ Write-Stage -Tag SUCCESS -Message "Pre-flight passed. NetworkAddress for generat
 $buildResults = New-Object System.Collections.Generic.List[object]
 
 foreach ($profileName in $profilesToBuild) {
-    $profileDef = $config.profiles.$profileName
+    $profileDef = Get-JsonValue -Object $profilesConfig -Name $profileName
+    if ($null -eq $profileDef) {
+        Invoke-Abort "profiles.json has no 'profiles.$profileName' definition."
+    }
     $profileLabel = Get-ProfileDisplayLabel -ProfileName $profileName
     $profileVaults = $profileDef.vaultKeys | ForEach-Object { $resolvedVaults[$_] }
 
