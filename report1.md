@@ -227,3 +227,19 @@ While the codebase is 100% safe to deploy internally today (9.6 / 10), the remai
 ## 7. Final Audit Conclusion
 
 The `ClientVaultAccessMSIBuilder` automation suite is **robust, secure, deterministic, and approved for internal enterprise production deployment**.
+
+---
+
+## 8. Post-Report Addendum (2026-09-11) — Live Run Finding and Fix
+
+A subsequent live run against the real M-Files server (7 online vaults, Windows SSO) surfaced a real defect this report's StrictMode review did not catch, because the review covered dynamic *reads* (`Get-JsonValue`/`Get-JsonPropertyNames`) but not dynamic *writes*.
+
+* **Defect:** the client/builder `AuthType` reconciliation block used plain dot-assignment (`$config.server.clientAuthType = ...`, `.builderAuthType = ...`) to set two properties that do not exist in `profiles.json`'s schema. A `ConvertFrom-Json` `PSCustomObject` only permits dot-assignment for properties it already has — creating a *new* property that way throws under `Set-StrictMode -Version Latest` ("The property '...' cannot be found on this object"). The build terminated immediately after `[SUCCESS] Enumerated N online vault(s).` with no `[ERROR]` line in the console or the log file, because the exception was rendered by PowerShell's default error host, not routed through `Write-Stage`.
+* **Fix:** switched both properties to `$config.server | Add-Member -NotePropertyName X -NotePropertyValue Y -Force`, which creates or overwrites the property without the StrictMode restriction. `$config.server.authType = ...` was left as dot-assignment since `authType` already exists in the schema. No behavioral change to the resulting config values, manifest JSON shape, or client `<AuthType>` output — confirmed by inspection of the one remaining downstream read site.
+* **Additional hardening applied as a result:**
+  * The AuthType-reconciliation block, and now the entire `# ---- Main ----` flow, is wrapped in `try/catch -> Invoke-Abort`, so any future unanticipated exception is written to `output\build_*.log` instead of vanishing. Confirmed via an isolated `pwsh` test that `exit 1`/`exit 0` inside a `try` block are not intercepted by an enclosing `catch` — existing exit codes and control flow are unchanged.
+  * Added a console `Write-Progress` bar tracking each profile x language build step (percent complete) — a UX-only addition, no change to the log format or CLI contract.
+* **Scope check:** re-scanned the full script for the same dot-assignment-on-new-property pattern; no other instances found. `$config.packageShare` and `$config.server.authType` are pre-existing schema keys (safe); `$el.InnerText`, `$psi.*`, `$proc.StartInfo` are real .NET object properties, not dynamic `PSCustomObject` properties, and are unaffected by this bug class.
+* **Verification:** syntax-validated via `[System.Management.Automation.Language.Parser]::ParseFile` after each change (no live M-Files server available in the dev environment to re-run the full pipeline end-to-end this round — operator to confirm on next real run).
+
+This does not change the report's overall conclusion or score — it closes the one gap the original StrictMode review missed, and adds defense-in-depth so a similar defect cannot fail silently again.

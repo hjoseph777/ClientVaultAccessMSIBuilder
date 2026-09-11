@@ -803,6 +803,14 @@ function Select-Language {
 
 # ---- Main ----
 
+# Top-level guard: any exception not already routed through Invoke-Abort (i.e. one we didn't
+# anticipate) would otherwise terminate via PowerShell's default error rendering - console-only,
+# never reaching Write-Stage/the log file, and lost once the launching window closes. This does
+# not change any existing exit code or control flow: Invoke-Abort's own `exit 1` calls, and the
+# `exit 0`/`exit 1` at the end of this block, terminate the process directly and are never
+# intercepted by this catch.
+try {
+
 $config = Get-KitConfig
 
 $profilesToBuild = if ($Profiles) { $Profiles } else { $config.defaultProfiles }
@@ -833,22 +841,36 @@ $versionsPath = Test-PreflightEnvironment -Config $config
 $vaultConnectionResult = Get-OnlineVaults -Config $config
 $onlineVaults = $vaultConnectionResult.Vaults
 
-# Decouple builder COM auth from client MSI auth:
-# Preserve configured clientAuthType if defined, or explicit authType if not 'auto'.
-# Only fall back to builder-detected authType if clientAuthType is omitted and authType was 'auto'.
-$builderAuthType = $vaultConnectionResult.DetectedAuthType
-$configuredClientAuthType = Get-JsonValue -Object $config.server -Name 'clientAuthType'
-if (-not [string]::IsNullOrWhiteSpace([string]$configuredClientAuthType)) {
-    $config.server.clientAuthType = [string]$configuredClientAuthType
+# Wrapped so a failure here (e.g. an unexpected value on $config.server) is written to the
+# build log via Invoke-Abort instead of terminating silently with nothing after "Enumerated N
+# online vault(s)." - StrictMode/ErrorActionPreference='Stop' errors in this block otherwise
+# never reach Write-Stage and the console error is lost once the launching window closes.
+try {
+    # Decouple builder COM auth from client MSI auth:
+    # Preserve configured clientAuthType if defined, or explicit authType if not 'auto'.
+    # Only fall back to builder-detected authType if clientAuthType is omitted and authType was 'auto'.
+    # 'clientAuthType'/'builderAuthType' are not in profiles.json's schema, so this PSCustomObject
+    # (from ConvertFrom-Json) has no such property yet - plain dot-assignment throws under
+    # StrictMode ("The property '...' cannot be found on this object"); Add-Member -Force is
+    # required to create (or overwrite) these note properties.
+    $builderAuthType = $vaultConnectionResult.DetectedAuthType
+    $configuredClientAuthType = Get-JsonValue -Object $config.server -Name 'clientAuthType'
+    if (-not [string]::IsNullOrWhiteSpace([string]$configuredClientAuthType)) {
+        $clientAuthType = [string]$configuredClientAuthType
+    }
+    elseif ($config.server.authType -ne 'auto') {
+        $clientAuthType = [string]$config.server.authType
+    }
+    else {
+        $clientAuthType = $builderAuthType
+    }
+    $config.server | Add-Member -NotePropertyName 'clientAuthType' -NotePropertyValue $clientAuthType -Force
+    $config.server | Add-Member -NotePropertyName 'builderAuthType' -NotePropertyValue $builderAuthType -Force
+    $config.server.authType = $clientAuthType
 }
-elseif ($config.server.authType -ne 'auto') {
-    $config.server.clientAuthType = [string]$config.server.authType
+catch {
+    Invoke-Abort "Failed reconciling client/builder AuthType from profiles.json 'server' config: $($_.Exception.Message)."
 }
-else {
-    $config.server.clientAuthType = $builderAuthType
-}
-$config.server.builderAuthType = $builderAuthType
-$config.server.authType = $config.server.clientAuthType
 $resolvedVaults = Resolve-Vaults -OnlineVaults $onlineVaults -Config $config -RequiredKeys $requiredVaultKeys
 $packageInfo = Test-PackageIntegrity -Languages $languagesToBuild -Config $config -VersionsPath $versionsPath
 $networkAddress = Get-NetworkAddress -Override $ServerAddress
@@ -856,6 +878,8 @@ $networkAddress = Get-NetworkAddress -Override $ServerAddress
 Write-Stage -Tag SUCCESS -Message "Pre-flight passed. NetworkAddress for generated clients: $networkAddress"
 
 $buildResults = New-Object System.Collections.Generic.List[object]
+$totalBuildSteps = $profilesToBuild.Count * $languagesToBuild.Count
+$buildStepIndex = 0
 
 foreach ($profileName in $profilesToBuild) {
     $profileDef = Get-JsonValue -Object $profilesConfig -Name $profileName
@@ -873,6 +897,8 @@ foreach ($profileName in $profilesToBuild) {
         $outputName = Get-OutputMsiFileName -Lang $lang -Pinned $packageInfo.Pinned -ProfileName $profileName
         $tempOut = New-TempFilePath -Extension 'msi'
 
+        $buildStepIndex++
+        Write-Progress -Activity 'Building M-Files client MSIs' -Status "$profileLabel [$lang] ($buildStepIndex of $totalBuildSteps)" -PercentComplete ([int](($buildStepIndex / $totalBuildSteps) * 100))
         Write-Stage -Tag PROGRESS -Message "Building '$profileLabel' [$lang] -> $outputName"
 
         $buildOutcome = Invoke-CustomizerBuild -BaseMsiPath $baseInfo.Path -XmlPath $tempXml -OutputPath $tempOut
@@ -924,6 +950,8 @@ foreach ($profileName in $profilesToBuild) {
     }
 }
 
+Write-Progress -Activity 'Building M-Files client MSIs' -Completed
+
 Write-Host ''
 Write-Host '===== RUN SUMMARY ====='
 foreach ($r in $buildResults) {
@@ -939,3 +967,8 @@ if (@($buildResults | Where-Object { $_.Status -ne 'Built' }).Count -gt 0) {
     exit 1
 }
 exit 0
+
+}
+catch {
+    Invoke-Abort "Unexpected error during build: $($_.Exception.Message)."
+}

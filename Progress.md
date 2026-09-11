@@ -280,3 +280,52 @@ all were doc/orphan-file only, no code changes.
 - Updated `Start.bat` to compute an absolute script path (`%~dp0ClientVaultAccessMSIBuilder.ps1`) and fail early if that script is missing.
 - Updated launcher invocation to execute PowerShell through `%ComSpec% /d /c` for consistent behavior across parent shells.
 - Re-ran `tests/Test-StartBatArgs.ps1` (15/15 passing) to confirm positional argument contract remained unchanged.
+
+## Latest Update (2026-09-11) - Live Server Run: Silent Stop After Vault Enumeration Fixed
+
+A live run on the real M-Files server (7 online vaults, Windows SSO) consistently
+stopped right after `[SUCCESS] Enumerated 7 online vault(s).` with no `[ERROR]`
+line in either the console or `output\build_*.log` — nothing to diagnose from.
+
+- **Step 1 (diagnostic hardening):** wrapped the client/builder `AuthType`
+  reconciliation block (between `Get-OnlineVaults` and `Resolve-Vaults`) in
+  `try/catch -> Invoke-Abort`. That block wasn't previously guarded, so any
+  exception inside it terminated the run via PowerShell's default error
+  rendering — console-only, never reaching `Write-Stage`/the log file, and lost
+  entirely once the launching window closed. This surfaced the real error on
+  the next run: `Exception setting "clientAuthType": "The property
+  'clientAuthType' cannot be found on this object."`
+- **Step 2 (root cause, fixed):** `$config.server.clientAuthType = ...` and
+  `.builderAuthType = ...` were plain dot-assignments to properties that don't
+  exist in `profiles.json`'s schema. A `ConvertFrom-Json` `PSCustomObject` only
+  allows dot-assignment for properties it already has; creating a *new*
+  property that way throws under `Set-StrictMode -Version Latest`. Fixed by
+  switching both to `$config.server | Add-Member -NotePropertyName X
+  -NotePropertyValue Y -Force`. Left `$config.server.authType = ...` as
+  dot-assignment since `authType` already exists in the schema.
+  File: `ClientVaultAccessMSIBuilder.ps1` (main flow, client/builder AuthType
+  reconciliation block).
+- Confirmed the vault patterns themselves (`conform` / `approb`) were never
+  the problem — they correctly substring-match vault names containing
+  "conform"/"approba" (PowerShell `-match` is case-insensitive by default).
+- Syntax-validated via `[System.Management.Automation.Language.Parser]::ParseFile`
+  after both edits (no live M-Files server available in the dev environment to
+  run the full pipeline end-to-end). Operator to confirm on next real run.
+- Documented the underlying PSCustomObject dot-assignment gotcha in Skills.md
+  §4 so it isn't rediscovered the same way again.
+- **Follow-up hardening:** wrapped the entire `# ---- Main ----` flow (from
+  `Get-KitConfig` through the final `exit 0`) in a top-level `try/catch` ->
+  `Invoke-Abort`, so any future unanticipated exception anywhere in the run
+  is logged instead of silently vanishing - not just the one block above.
+  Confirmed empirically (isolated `pwsh` test) that `exit 1`/`exit 0` inside
+  the `try` still terminate the process directly and are never intercepted
+  by the new `catch` - existing exit codes and control flow are unchanged.
+- Also added a console `Write-Progress` bar tracking each profile x language
+  build step (percent complete, current step label), completed at the end of
+  the run - purely a console UX addition, no change to the log format or
+  CLI contract.
+- Re-scanned the whole script for the same dot-assignment-on-new-property
+  bug class: no other instances found (`$config.packageShare` and
+  `$config.server.authType` are pre-existing schema keys, safe; `$el.InnerText`,
+  `$psi.*`, `$proc.StartInfo` are real .NET object properties, not dynamic
+  PSCustomObject properties, unaffected).
