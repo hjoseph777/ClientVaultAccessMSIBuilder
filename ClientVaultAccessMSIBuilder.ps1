@@ -878,7 +878,9 @@ $networkAddress = Get-NetworkAddress -Override $ServerAddress
 Write-Stage -Tag SUCCESS -Message "Pre-flight passed. NetworkAddress for generated clients: $networkAddress"
 
 $buildResults = New-Object System.Collections.Generic.List[object]
-$totalBuildSteps = $profilesToBuild.Count * $languagesToBuild.Count
+# @() forces array context - $profilesToBuild can collapse to a scalar (e.g. a single -Profile
+# value or a single-element profiles.json list), and a scalar has no .Count under StrictMode.
+$totalBuildSteps = @($profilesToBuild).Count * @($languagesToBuild).Count
 $buildStepIndex = 0
 
 foreach ($profileName in $profilesToBuild) {

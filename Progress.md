@@ -329,3 +329,32 @@ line in either the console or `output\build_*.log` — nothing to diagnose from.
   `$config.server.authType` are pre-existing schema keys, safe; `$el.InnerText`,
   `$psi.*`, `$proc.StartInfo` are real .NET object properties, not dynamic
   PSCustomObject properties, unaffected).
+
+## Latest Update (2026-09-11) - Progress-Bar Regression Fixed on Next Live Run
+
+The very next live run (same server, same 7 vaults) got past vault resolution
+and package verification cleanly, then hit a **new** StrictMode error -
+confirming the top-level try/catch added moments earlier is working exactly
+as designed: instead of a silent stop, the run printed a clear `[ERROR]
+Unexpected error during build: The property 'Count' cannot be found on this
+object.` immediately after "Pre-flight passed".
+
+- **Root cause:** the progress-bar line added in the prior round,
+  `$totalBuildSteps = $profilesToBuild.Count * $languagesToBuild.Count`,
+  read `.Count` directly on `$profilesToBuild` without `@()` array-forcing.
+  Every other array variable in this script (`$languagesToBuild`,
+  `$vaultKeys`, `$found`, etc.) is either built with `@(...)` or already
+  guaranteed to be a collection; `$profilesToBuild` was the one gap - it can
+  collapse to a scalar (a single `-Profile` value, or a single-element
+  `profiles.json` list), and a scalar has no `.Count` under
+  `Set-StrictMode -Version Latest`.
+- **Fix:** wrapped both operands in `@()`:
+  `@($profilesToBuild).Count * @($languagesToBuild).Count`.
+  File: `ClientVaultAccessMSIBuilder.ps1` (main flow, progress-bar setup).
+- Syntax-validated clean afterward. Operator to confirm on next real run.
+- **Lesson reinforced:** any new `.Count`/array-shaped access on a variable
+  that might come from a single CLI value or a single-element JSON list must
+  go through `@(...)` first - this is now the second bug in two rounds from
+  the same StrictMode class (dynamic-property writes, then scalar-vs-array
+  reads), both only surfaced because a real live run was available to test
+  against.
